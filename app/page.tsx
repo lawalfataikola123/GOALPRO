@@ -98,13 +98,19 @@ export default function Home() {
     setAnalysisError('');
     setAnalysisLoading(true);
     try {
+      const ninjasLeague = apiNinjasLeague(match.league.name);
+      const isCostaRicaAscenso = match.league.country.trim().toLowerCase() === "costa rica"
+        && /first league|liga de ascenso/i.test(match.league.name);
       const query = new URLSearchParams({
         fixture: String(match.fixture.id),
         homeName: match.teams.home.name,
         awayName: match.teams.away.name,
-        league: apiNinjasLeague(match.league.name) ?? "",
+        league: ninjasLeague ?? "",
+        anysportLeagueId: isCostaRicaAscenso ? "asl_a401c703b7db444fa8ef215f190c30d3" : "",
       });
-      if (!query.get("league")) throw new Error(`GOALPRO cannot retrieve recent form for ${match.league.name}: this competition is not mapped to an API Ninjas league yet.`);
+      if (!query.get("league") && !query.get("anysportLeagueId")) {
+        throw new Error(`GOALPRO cannot retrieve recent form for ${match.league.country} · ${match.league.name}: no configured provider covers this competition yet.`);
+      }
       const response = await fetch(`/api/analysis?${query.toString()}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? 'Analysis could not be loaded.');
