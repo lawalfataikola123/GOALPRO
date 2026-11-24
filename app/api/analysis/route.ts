@@ -141,7 +141,7 @@ function summarizeNinjas(matches: Match[], teamName: string): TeamSummary {
 function normalizeAnySportTeamName(value: string): string {
   return value.normalize("NFD").replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
-    .replace(/\b(adr|fc|cf|afc|sc|sercoba)\\b/g, " ")
+    .replace(/\b(adr|fc|cf|afc|sc|sercoba)\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
