@@ -138,17 +138,26 @@ function summarizeNinjas(matches: Match[], teamName: string): TeamSummary {
   };
 }
 
+function normalizeAnySportTeamName(value: string): string {
+  return value.normalize("NFD").replace(/\\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/\\b(adr|fc|cf|afc|sc|sercoba)\\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\\s+/g, " ");
+}
+
 function summarizeAnySport(matches: AnySportMatch[], teamName: string): TeamSummary {
-  const normalized = teamName.trim().toLowerCase();
+  const normalized = normalizeAnySportTeamName(teamName);
   const recent = matches
     .filter((m) => anySportCompleted.has(m.status) && parseScore(m.ft_score))
-    .filter((m) => m.home.name.trim().toLowerCase() === normalized || m.away.name.trim().toLowerCase() === normalized)
+    .filter((m) => normalizeAnySportTeamName(m.home.name) === normalized || normalizeAnySportTeamName(m.away.name) === normalized)
     .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
     .slice(0, 10);
   let scored = 0, conceded = 0, btts = 0, over15 = 0, over25 = 0, firstHalfOver05 = 0, secondHalfOver05 = 0, halfSamples = 0;
   for (const match of recent) {
     const score = parseScore(match.ft_score)!;
-    const isHome = match.home.name.trim().toLowerCase() === normalized;
+    const isHome = normalizeAnySportTeamName(match.home.name) === normalized;
     const gf = isHome ? score[0] : score[1];
     const ga = isHome ? score[1] : score[0];
     scored += gf; conceded += ga;
@@ -199,13 +208,28 @@ export async function GET(request: NextRequest) {
       const home = summarizeAnySport(matches, homeName);
       const away = summarizeAnySport(matches, awayName);
       if (!home.matches || !away.matches) {
-        return NextResponse.json({ error: "AnySport returned no completed Liga de Ascenso matches for one or both teams in the last 90 days. No form statistics were generated." }, { status: 404 });
+        const availableTeams = [...new Set(matches.flatMap((m) => [m.home.name, m.away.name]))].sort();
+        console.warn("[GOALPRO analysis] AnySport team-name diagnostic", {
+          leagueId: anySportLeagueId,
+          returnedMatches: matches.length,
+          requestedTeams: [homeName, awayName],
+          matchedCounts: { home: home.matches, away: away.matches },
+          returnedTeams: availableTeams.slice(0, 40),
+        });
+        return NextResponse.json({
+          error: "AnySport returned no completed Liga de Ascenso matches for one or both teams in the last 90 days. No form statistics were generated.",
+          diagnostics: {
+            returnedMatches: matches.length,
+            matchedCounts: { home: home.matches, away: away.matches },
+            returnedTeams: availableTeams.slice(0, 40),
+          },
+        }, { status: 404 });
       }
       const h2h = matches
         .filter((m) => anySportCompleted.has(m.status) && parseScore(m.ft_score))
         .filter((m) => {
-          const pair = [m.home.name.trim().toLowerCase(), m.away.name.trim().toLowerCase()];
-          return pair.includes(homeName.toLowerCase()) && pair.includes(awayName.toLowerCase());
+          const pair = [normalizeAnySportTeamName(m.home.name), normalizeAnySportTeamName(m.away.name)];
+          return pair.includes(normalizeAnySportTeamName(homeName)) && pair.includes(normalizeAnySportTeamName(awayName));
         })
         .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
         .slice(0, 10)
