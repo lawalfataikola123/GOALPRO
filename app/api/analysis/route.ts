@@ -1,213 +1,130 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API_BASE = "https://v3.football.api-sports.io";
-const completedStatuses = new Set(["FT", "AET", "PEN"]);
-
-type ApiFixture = {
-  fixture: { id: number; date: string; status: { short: string } };
-  league: { name: string; season: number };
-  teams: {
-    home: { id: number; name: string };
-    away: { id: number; name: string };
-  };
-  goals: { home: number | null; away: number | null };
-  score: { halftime: { home: number | null; away: number | null } };
+const API_BASE = "https://api.api-ninjas.com/v1/soccermatches";
+const completed = new Set(["final"]);
+type Match = {
+  game_id: string;
+  league?: string;
+  date: string;
+  status: string;
+  home_team: { team_id?: string; name: string };
+  away_team: { team_id?: string; name: string };
+  home_score: number | null;
+  away_score: number | null;
 };
-
 type TeamSummary = {
-  teamId: number;
   matches: number;
   averageGoalsFor: number;
   averageGoalsAgainst: number;
   bttsRate: number;
   over15Rate: number;
   over25Rate: number;
-  firstHalfOver05Rate: number | null;
-  secondHalfOver05Rate: number | null;
-  homeMatches: number;
-  awayMatches: number;
+  firstHalfOver05Rate: null;
+  secondHalfOver05Rate: null;
 };
 
-async function providerGet(path: string, apiKey: string) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: { "x-apisports-key": apiKey },
+async function getTeamMatches(teamName: string, apiKey: string): Promise<Match[]> {
+  const url = new URL(API_BASE);
+  url.searchParams.set("team", teamName);
+  const response = await fetch(url, {
+    headers: { "X-Api-Key": apiKey },
     next: { revalidate: 900 },
   });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || (payload.errors && Object.keys(payload.errors).length > 0)) {
-    // Keep provider diagnostics server-side; never log or return the API key.
-    console.error("[GOALPRO analysis] Football provider request failed", {
-      path,
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !Array.isArray(payload)) {
+    console.error("[GOALPRO analysis] API Ninjas request failed", {
       status: response.status,
-      errors: payload.errors ?? null,
-      message: payload.message ?? null,
+      error: payload && !Array.isArray(payload) ? payload.error ?? payload.message ?? "Unexpected response" : null,
     });
-    throw new Error(`Football provider request failed (HTTP ${response.status}): ${JSON.stringify(payload.errors ?? payload.message ?? {})}`);
+    throw new Error("Recent match data is unavailable from the configured football provider.");
   }
-  return (payload.response ?? []) as ApiFixture[];
+  return payload as Match[];
 }
 
-function summarizeTeam(fixtures: ApiFixture[], teamId: number): TeamSummary {
-  const matches = fixtures
-    .filter((match) =>
-      completedStatuses.has(match.fixture.status.short) &&
-      match.goals.home !== null &&
-      match.goals.away !== null
-    )
-    .sort((a, b) => Date.parse(b.fixture.date) - Date.parse(a.fixture.date))
+function summarize(matches: Match[], teamName: string): TeamSummary {
+  const normalized = teamName.trim().toLowerCase();
+  const recent = matches
+    .filter((m) => completed.has(m.status) && Number.isFinite(m.home_score) && Number.isFinite(m.away_score))
+    .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
     .slice(0, 10);
-
-  let scored = 0;
-  let conceded = 0;
-  let btts = 0;
-  let over15 = 0;
-  let over25 = 0;
-  let firstHalfOver05 = 0;
-  let secondHalfOver05 = 0;
-  let firstHalfSamples = 0;
-  let secondHalfSamples = 0;
-  let homeMatches = 0;
-  let awayMatches = 0;
-
-  for (const match of matches) {
-    const isHome = match.teams.home.id === teamId;
-    const goalsFor = isHome ? match.goals.home! : match.goals.away!;
-    const goalsAgainst = isHome ? match.goals.away! : match.goals.home!;
-    const total = goalsFor + goalsAgainst;
-    scored += goalsFor;
-    conceded += goalsAgainst;
-    if (goalsFor > 0 && goalsAgainst > 0) btts += 1;
-    if (total > 1) over15 += 1;
-    if (total > 2) over25 += 1;
-    if (isHome) homeMatches += 1;
-    else awayMatches += 1;
-
-    const halfHome = match.score.halftime.home;
-    const halfAway = match.score.halftime.away;
-    if (halfHome !== null && halfAway !== null) {
-      firstHalfSamples += 1;
-      if (halfHome + halfAway > 0) firstHalfOver05 += 1;
-      const secondHome = match.goals.home! - halfHome;
-      const secondAway = match.goals.away! - halfAway;
-      secondHalfSamples += 1;
-      if (secondHome + secondAway > 0) secondHalfOver05 += 1;
-    }
+  let scored = 0, conceded = 0, btts = 0, over15 = 0, over25 = 0;
+  for (const match of recent) {
+    const isHome = match.home_team.name.trim().toLowerCase() === normalized;
+    const gf = isHome ? match.home_score! : match.away_score!;
+    const ga = isHome ? match.away_score! : match.home_score!;
+    scored += gf;
+    conceded += ga;
+    if (gf > 0 && ga > 0) btts++;
+    if (gf + ga > 1) over15++;
+    if (gf + ga > 2) over25++;
   }
-
-  const count = matches.length;
-  const rate = (value: number, sample: number) =>
-    sample ? Number((value / sample).toFixed(3)) : null;
-
+  const n = recent.length;
   return {
-    teamId,
-    matches: count,
-    averageGoalsFor: count ? Number((scored / count).toFixed(2)) : 0,
-    averageGoalsAgainst: count ? Number((conceded / count).toFixed(2)) : 0,
-    bttsRate: rate(btts, count) ?? 0,
-    over15Rate: rate(over15, count) ?? 0,
-    over25Rate: rate(over25, count) ?? 0,
-    firstHalfOver05Rate: rate(firstHalfOver05, firstHalfSamples),
-    secondHalfOver05Rate: rate(secondHalfOver05, secondHalfSamples),
-    homeMatches,
-    awayMatches,
+    matches: n,
+    averageGoalsFor: n ? Number((scored / n).toFixed(2)) : 0,
+    averageGoalsAgainst: n ? Number((conceded / n).toFixed(2)) : 0,
+    bttsRate: n ? Number((btts / n).toFixed(3)) : 0,
+    over15Rate: n ? Number((over15 / n).toFixed(3)) : 0,
+    over25Rate: n ? Number((over25 / n).toFixed(3)) : 0,
+    // API Ninjas documents half-by-half scores as premium-only live data.
+    firstHalfOver05Rate: null,
+    secondHalfOver05Rate: null,
   };
 }
 
 export async function GET(request: NextRequest) {
-  const apiKey = process.env.API_FOOTBALL_KEY;
+  const apiKey = process.env.API_NINJAS_KEY;
   if (!apiKey) {
-    return NextResponse.json(
-      { error: "Football data is not configured on the server." },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "API Ninjas is not configured on the server." }, { status: 503 });
   }
-
   const params = request.nextUrl.searchParams;
   const fixtureId = Number(params.get("fixture"));
-  const homeId = Number(params.get("home"));
-  const awayId = Number(params.get("away"));
-  const season = Number(params.get("season"));
-
-  if (![fixtureId, homeId, awayId, season].every(Number.isSafeInteger) ||
-      fixtureId <= 0 || homeId <= 0 || awayId <= 0 || homeId === awayId ||
-      season < 2000 || season > 2100) {
-    return NextResponse.json(
-      { error: "Provide valid fixture, home, away and season IDs." },
-      { status: 400 },
-    );
+  const homeName = params.get("homeName")?.trim() ?? "";
+  const awayName = params.get("awayName")?.trim() ?? "";
+  if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0 || !homeName || !awayName || homeName.length > 100 || awayName.length > 100) {
+    return NextResponse.json({ error: "Provide a valid fixture ID and both team names." }, { status: 400 });
   }
-
   try {
-    // Pull a rolling recent window without the season or "last" parameters,
-    // both of which are restricted on the user's current API plan.
-    const to = new Date();
-    const from = new Date(to);
-    from.setDate(from.getDate() - 180);
-    const dateOnly = (date: Date) => date.toISOString().slice(0, 10);
-    const recentWindow = `from=${dateOnly(from)}&to=${dateOnly(to)}`;
-
-    const [recent, headToHead] = await Promise.all([
-      Promise.all([
-        providerGet(`/fixtures?team=${homeId}&${recentWindow}`, apiKey),
-        providerGet(`/fixtures?team=${awayId}&${recentWindow}`, apiKey),
-      ]),
-      providerGet(`/fixtures/headtohead?h2h=${homeId}-${awayId}`, apiKey)
-        .catch((error) => {
-          console.warn("[GOALPRO analysis] Head-to-head data unavailable on this API plan", {
-            message: error instanceof Error ? error.message : "Unknown provider error",
-          });
-          return [] as ApiFixture[];
-        }),
+    const [homeMatches, awayMatches] = await Promise.all([
+      getTeamMatches(homeName, apiKey),
+      getTeamMatches(awayName, apiKey),
     ]);
-    const [homeRecent, awayRecent] = recent;
-
-    const home = summarizeTeam(homeRecent, homeId);
-    const away = summarizeTeam(awayRecent, awayId);
-    const h2h = headToHead
-      .filter((match) =>
-        completedStatuses.has(match.fixture.status.short) &&
-        match.goals.home !== null &&
-        match.goals.away !== null
-      )
-      .sort((a, b) => Date.parse(b.fixture.date) - Date.parse(a.fixture.date))
+    const home = summarize(homeMatches, homeName);
+    const away = summarize(awayMatches, awayName);
+    const awayGameIds = new Set(awayMatches.map((m) => m.game_id));
+    const h2h = homeMatches
+      .filter((m) => awayGameIds.has(m.game_id) && completed.has(m.status) &&
+        Number.isFinite(m.home_score) && Number.isFinite(m.away_score))
+      .sort((a, b) => Date.parse(b.date) - Date.parse(a.date))
       .slice(0, 10)
-      .map((match) => ({
-        fixtureId: match.fixture.id,
-        date: match.fixture.date,
-        home: match.teams.home.name,
-        away: match.teams.away.name,
-        score: [match.goals.home, match.goals.away],
-        competition: match.league.name,
+      .map((m) => ({
+        fixtureId: m.game_id,
+        date: m.date,
+        home: m.home_team.name,
+        away: m.away_team.name,
+        score: [m.home_score, m.away_score] as [number, number],
+        competition: m.league ?? "Unknown competition",
       }));
-
     return NextResponse.json({
       fixtureId,
-      formWindow: { from: dateOnly(from), to: dateOnly(to) },
-      formSource: "Most recent completed matches within the rolling 180-day window",
-      sampleSizes: {
-        homeRecent: home.matches,
-        awayRecent: away.matches,
-        headToHead: h2h.length,
-      },
+      formSource: "API Ninjas current-season completed match results",
+      sampleSizes: { homeRecent: home.matches, awayRecent: away.matches, headToHead: h2h.length },
       home,
       away,
       headToHead: h2h,
       limitations: [
-        "Rates are calculated from completed matches returned by the provider.",
-        "Half-specific rates use matches with available half-time scores.",
-        "xG and injury data are not included in this analysis.",
-        "Current form uses completed matches from the rolling 180-day window, across seasons where returned by the provider.",
-        "A small sample or missing provider data can reduce reliability.",
+        "Team form uses the latest completed matches returned for the current season.",
+        "API Ninjas free access does not provide half-by-half scores, so first-half and second-half rates are unavailable.",
+        "Only competitions and teams covered by API Ninjas can be analysed.",
+        "These are observed historical rates, not calibrated probabilities or guaranteed predictions.",
       ],
-    });
+    }, { headers: { "Cache-Control": "s-maxage=900, stale-while-revalidate=300" } });
   } catch (error) {
-    console.error("[GOALPRO analysis] Analysis request failed", {
-      message: error instanceof Error ? error.message : "Unknown analysis error",
+    console.error("[GOALPRO analysis] Analysis failed", {
+      message: error instanceof Error ? error.message : "Unknown error",
     });
-    return NextResponse.json(
-      { error: "Match analysis could not be retrieved. Check provider access and try again later." },
-      { status: 502 },
-    );
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "Recent match analysis is unavailable.",
+    }, { status: 502 });
   }
 }
