@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { calculateMarkets, type GoalInputs } from '@/lib/prediction';
 
 const initial: GoalInputs = {
@@ -18,8 +18,39 @@ const marketGroups = [
   { title: 'Second-half markets', keys: ['secondBtts', 'secondOver05', 'secondOver15', 'secondUnder05'] },
 ] as const;
 
+type Fixture = {
+  fixture: { id: number; date: string; status: { long: string } };
+  teams: { home: { name: string }; away: { name: string } };
+  league: { name: string; country: string };
+  goals: { home: number | null; away: number | null };
+};
+
 export default function Home() {
   const [inputs, setInputs] = useState(initial);
+  const [fixtures, setFixtures] = useState<Fixture[]>([]);
+  const [fixtureState, setFixtureState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [fixtureError, setFixtureError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/fixtures')
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error ?? 'Could not load fixtures.');
+        return payload;
+      })
+      .then(payload => {
+        if (!active) return;
+        setFixtures(payload.fixtures ?? []);
+        setFixtureState('ready');
+      })
+      .catch(error => {
+        if (!active) return;
+        setFixtureError(error instanceof Error ? error.message : 'Could not load fixtures.');
+        setFixtureState('error');
+      });
+    return () => { active = false; };
+  }, []);
   const markets = useMemo(() => calculateMarkets(inputs), [inputs]);
   const update = (key: keyof GoalInputs, value: string) => {
     const parsed = Number(value);
@@ -46,6 +77,23 @@ export default function Home() {
           <div className="orb-wrap"><div className="orb"><span>G</span></div><div className="orbit orbit-one"/><div className="orbit orbit-two"/></div>
           <div className="panel-foot"><span>POISSON GOAL MODEL</span><span>v0.1.0</span></div>
         </div>
+      </section>
+
+      <section className="section-head" id="fixtures">
+        <div><p className="eyebrow">LIVE DATA / AFRICA-LAGOS</p><h2>Today&apos;s fixtures</h2><p className="muted">Fixtures are retrieved from API-Football. No sample matches are displayed.</p></div>
+        <span className="demo-tag">{fixtureState === 'loading' ? 'LOADING' : fixtureState === 'ready' ? `${fixtures.length} FIXTURES` : 'DATA UNAVAILABLE'}</span>
+      </section>
+      <section className="fixture-board">
+        {fixtureState === 'loading' && <p className="input-note">Loading today&apos;s fixtures…</p>}
+        {fixtureState === 'error' && <p className="input-note">{fixtureError} Check that API_FOOTBALL_KEY is configured on the deployment server.</p>}
+        {fixtureState === 'ready' && fixtures.length === 0 && <p className="input-note">No fixtures were returned for today. Try again later.</p>}
+        {fixtureState === 'ready' && fixtures.map(match => (
+          <article className="fixture-row" key={match.fixture.id}>
+            <div className="fixture-league">{match.league.country} · {match.league.name}</div>
+            <div className="fixture-teams"><span>{match.teams.home.name}</span><strong>{match.goals.home ?? '—'} : {match.goals.away ?? '—'}</strong><span>{match.teams.away.name}</span></div>
+            <div className="fixture-meta">{new Date(match.fixture.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' })} WAT · {match.fixture.status.long}</div>
+          </article>
+        ))}
       </section>
 
       <section className="section-head" id="workbench">
