@@ -183,9 +183,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       fixtureId,
-      season,
-      dataSeason,
-      usedHistoricalFallback,
+      formWindow: { from: dateOnly(from), to: dateOnly(to) },
+      formSource: "Most recent completed matches within the rolling 180-day window",
       sampleSizes: {
         homeRecent: home.matches,
         awayRecent: away.matches,
@@ -198,10 +197,8 @@ export async function GET(request: NextRequest) {
         "Rates are calculated from completed matches returned by the provider.",
         "Half-specific rates use matches with available half-time scores.",
         "xG and injury data are not included in this analysis.",
+        "Current form uses completed matches from the rolling 180-day window, across seasons where returned by the provider.",
         "A small sample or missing provider data can reduce reliability.",
-        ...(usedHistoricalFallback
-          ? [`The requested ${season} season is not included in the current API plan. Team statistics use the 2024 season instead and must be treated as historical context, not current form.`]
-          : []),
       ],
     });
   } catch (error) {
