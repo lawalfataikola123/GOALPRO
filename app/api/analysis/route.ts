@@ -217,7 +217,7 @@ export async function GET(request: NextRequest) {
           returnedTeams: availableTeams.slice(0, 40),
         });
         return NextResponse.json({
-          error: "AnySport returned no completed Liga de Ascenso matches for one or both teams in the last 90 days. No form statistics were generated.",
+          error: `AnySport returned no completed Liga de Ascenso matches for one or both teams in the last 90 days. No form statistics were generated. Returned team names: ${availableTeams.slice(0, 20).join(", ") || "none"}.`,
           diagnostics: {
             returnedMatches: matches.length,
             matchedCounts: { home: home.matches, away: away.matches },
