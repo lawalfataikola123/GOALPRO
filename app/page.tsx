@@ -31,6 +31,7 @@ type TeamAnalysis = {
   firstHalfOver05Rate: number | null; secondHalfOver05Rate: number | null;
 };
 type MatchAnalysis = {
+  season: number; dataSeason: number; usedHistoricalFallback: boolean;
   sampleSizes: { homeRecent: number; awayRecent: number; headToHead: number };
   home: TeamAnalysis; away: TeamAnalysis;
   headToHead: Array<{ fixtureId: number; date: string; home: string; away: string; score: [number, number]; competition: string }>;
@@ -133,7 +134,8 @@ export default function Home() {
               {analysisLoading && <p className="input-note">Retrieving recent form and head-to-head data…</p>}
               {analysisError && <p className="input-note">{analysisError}</p>}
               {analysis && <>
-                <div className="analysis-columns">{[{ name: match.teams.home.name, stats: analysis.home, count: analysis.sampleSizes.homeRecent }, { name: match.teams.away.name, stats: analysis.away, count: analysis.sampleSizes.awayRecent }].map(team => <div className="analysis-team" key={team.name}><h4>{team.name}</h4><small>{team.count} completed matches</small><p>Goals for <b>{team.stats.averageGoalsFor.toFixed(2)}</b> · Against <b>{team.stats.averageGoalsAgainst.toFixed(2)}</b></p><p>BTTS <b>{Math.round(team.stats.bttsRate * 100)}%</b> · O1.5 <b>{Math.round(team.stats.over15Rate * 100)}%</b> · O2.5 <b>{Math.round(team.stats.over25Rate * 100)}%</b></p><p>1H O0.5 <b>{team.stats.firstHalfOver05Rate === null ? 'N/A' : `${Math.round(team.stats.firstHalfOver05Rate * 100)}%`}</b> · 2H O0.5 <b>{team.stats.secondHalfOver05Rate === null ? 'N/A' : `${Math.round(team.stats.secondHalfOver05Rate * 100)}%`}</b></p></div>)}</div>
+                {analysis.usedHistoricalFallback && <p className="input-note">Current-season statistics are restricted by the API plan. These team figures use the 2024 season as historical context, not current form.</p>}
+                <div className="analysis-columns">{[{ name: match.teams.home.name, stats: analysis.home, count: analysis.sampleSizes.homeRecent }, { name: match.teams.away.name, stats: analysis.away, count: analysis.sampleSizes.awayRecent }].map(team => <div className="analysis-team" key={team.name}><h4>{team.name}</h4><small>{team.count} completed matches · season {analysis.dataSeason}</small><p>Goals for <b>{team.stats.averageGoalsFor.toFixed(2)}</b> · Against <b>{team.stats.averageGoalsAgainst.toFixed(2)}</b></p><p>BTTS <b>{Math.round(team.stats.bttsRate * 100)}%</b> · O1.5 <b>{Math.round(team.stats.over15Rate * 100)}%</b> · O2.5 <b>{Math.round(team.stats.over25Rate * 100)}%</b></p><p>1H O0.5 <b>{team.stats.firstHalfOver05Rate === null ? 'N/A' : `${Math.round(team.stats.firstHalfOver05Rate * 100)}%`}</b> · 2H O0.5 <b>{team.stats.secondHalfOver05Rate === null ? 'N/A' : `${Math.round(team.stats.secondHalfOver05Rate * 100)}%`}</b></p></div>)}</div>
                 <h4>Head-to-head <small>({analysis.sampleSizes.headToHead} completed matches)</small></h4>
                 {analysis.headToHead.length ? <div className="h2h-list">{analysis.headToHead.map(game => <p key={game.fixtureId}>{new Date(game.date).toLocaleDateString('en-GB')} · {game.home} <b>{game.score[0]}–{game.score[1]}</b> {game.away}</p>)}</div> : <p className="input-note">No completed head-to-head records were returned.</p>}
                 <p className="input-note">Historical rates only. These are not calibrated match probabilities. {analysis.limitations.join(' ')}</p>
