@@ -2,6 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 
 const API_BASE = "https://api.api-ninjas.com/v1/soccermatches";
 const completed = new Set(["final"]);
+const supportedLeagues = new Set([
+  "acl", "afcon", "aleague", "aleaguewomen", "allsvenskan", "asiancup",
+  "austrianbundesliga", "belgianproleague", "brasileirao", "bundesliga",
+  "bundesliga2", "cafcl", "championship", "clubworldcup", "concacafcc",
+  "concacafnationsleague", "copaamerica", "copadelrey", "coppaitalia",
+  "coupedefrance", "csl", "danishsuperliga", "dfbpokal", "eflcup",
+  "eliteserien", "epl", "eredivisie", "euro", "euroqualifying", "facup",
+  "friendlies", "goldcup", "greeksuperleague", "isl", "j1league", "laliga",
+  "laliga2", "leagueone", "leaguescup", "leaguetwo", "libertadores", "ligaf",
+  "ligamx", "ligaprofesional", "ligue1", "ligue2", "mls", "nationsleague",
+  "nsl", "premiereligue", "primeiraliga", "rpl", "saudiproleague",
+  "scottishpremiership", "seriea", "serieb", "sudamericana", "superlig",
+  "ucl", "uecl", "uel", "uslc", "uslsuperleague", "usopencup", "uwcl",
+  "wcqafrica", "wcqasia", "wcqeurope", "wcqnorthamerica", "wcqsouthamerica",
+  "womenseuro", "womensworldcup", "worldcup", "wsl"
+]);
 type Match = {
   game_id: string;
   league?: string;
@@ -23,9 +39,10 @@ type TeamSummary = {
   secondHalfOver05Rate: null;
 };
 
-async function getTeamMatches(teamName: string, apiKey: string): Promise<Match[]> {
+async function getTeamMatches(teamName: string, league: string, apiKey: string): Promise<Match[]> {
   const url = new URL(API_BASE);
   url.searchParams.set("team", teamName);
+  url.searchParams.set("league", league);
   const response = await fetch(url, {
     headers: { "X-Api-Key": apiKey },
     next: { revalidate: 900 },
@@ -81,16 +98,20 @@ export async function GET(request: NextRequest) {
   const fixtureId = Number(params.get("fixture"));
   const homeName = params.get("homeName")?.trim() ?? "";
   const awayName = params.get("awayName")?.trim() ?? "";
-  if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0 || !homeName || !awayName || homeName.length > 100 || awayName.length > 100) {
-    return NextResponse.json({ error: "Provide a valid fixture ID and both team names." }, { status: 400 });
+  const league = params.get("league")?.trim().toLowerCase() ?? "";
+  if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0 || !homeName || !awayName || homeName.length > 100 || awayName.length > 100 || !supportedLeagues.has(league)) {
+    return NextResponse.json({ error: "This competition is not supported by the current match-data provider, or the fixture details are invalid." }, { status: 400 });
   }
   try {
     const [homeMatches, awayMatches] = await Promise.all([
-      getTeamMatches(homeName, apiKey),
-      getTeamMatches(awayName, apiKey),
+      getTeamMatches(homeName, league, apiKey),
+      getTeamMatches(awayName, league, apiKey),
     ]);
     const home = summarize(homeMatches, homeName);
     const away = summarize(awayMatches, awayName);
+    if (!home.matches || !away.matches) {
+      return NextResponse.json({ error: "The provider returned no completed current-season matches for one or both teams in this competition. No form statistics were generated." }, { status: 404 });
+    }
     const awayGameIds = new Set(awayMatches.map((m) => m.game_id));
     const h2h = homeMatches
       .filter((m) => awayGameIds.has(m.game_id) && completed.has(m.status) &&
