@@ -43,7 +43,7 @@ async function providerGet(path: string, apiKey: string) {
       errors: payload.errors ?? null,
       message: payload.message ?? null,
     });
-    throw new Error(`Football provider request failed (HTTP ${response.status})`);
+    throw new Error(`Football provider request failed (HTTP ${response.status}): ${JSON.stringify(payload.errors ?? payload.message ?? {})}`);
   }
   return (payload.response ?? []) as ApiFixture[];
 }
@@ -136,11 +136,37 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [homeRecent, awayRecent, headToHead] = await Promise.all([
-      providerGet(`/fixtures?team=${homeId}&last=10&season=${season}`, apiKey),
-      providerGet(`/fixtures?team=${awayId}&last=10&season=${season}`, apiKey),
+    let dataSeason = season;
+    let usedHistoricalFallback = false;
+    const [recent, headToHead] = await Promise.all([
+      (async () => {
+        try {
+          return await Promise.all([
+            providerGet(`/fixtures?team=${homeId}&last=10&season=${season}`, apiKey),
+            providerGet(`/fixtures?team=${awayId}&last=10&season=${season}`, apiKey),
+          ]);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "";
+          const seasonRestricted = message.includes("Free plans do not have access to this season");
+          if (!seasonRestricted || season <= 2024) throw error;
+
+          // The current fixture season is outside the user's API plan.
+          // Retry against the newest season explicitly allowed by the provider.
+          dataSeason = 2024;
+          usedHistoricalFallback = true;
+          console.warn("[GOALPRO analysis] Using historical season fallback", {
+            requestedSeason: season,
+            dataSeason,
+          });
+          return await Promise.all([
+            providerGet(`/fixtures?team=${homeId}&last=10&season=${dataSeason}`, apiKey),
+            providerGet(`/fixtures?team=${awayId}&last=10&season=${dataSeason}`, apiKey),
+          ]);
+        }
+      })(),
       providerGet(`/fixtures/headtohead?h2h=${homeId}-${awayId}&last=10`, apiKey),
     ]);
+    const [homeRecent, awayRecent] = recent;
 
     const home = summarizeTeam(homeRecent, homeId);
     const away = summarizeTeam(awayRecent, awayId);
@@ -162,6 +188,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       fixtureId,
       season,
+      dataSeason,
+      usedHistoricalFallback,
       sampleSizes: {
         homeRecent: home.matches,
         awayRecent: away.matches,
@@ -175,6 +203,9 @@ export async function GET(request: NextRequest) {
         "Half-specific rates use matches with available half-time scores.",
         "xG and injury data are not included in this analysis.",
         "A small sample or missing provider data can reduce reliability.",
+        ...(usedHistoricalFallback
+          ? [`The requested ${season} season is not included in the current API plan. Team statistics use the 2024 season instead and must be treated as historical context, not current form.`]
+          : []),
       ],
     });
   } catch (error) {
