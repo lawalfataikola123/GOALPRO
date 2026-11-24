@@ -30,6 +30,16 @@ type Match = {
   home_score: number | null;
   away_score: number | null;
 };
+type FootballDataTeam = { id: number; name: string; shortName?: string; tla?: string };
+type FootballDataMatch = {
+  id: number;
+  utcDate: string;
+  status: string;
+  competition?: { name?: string; code?: string };
+  homeTeam: FootballDataTeam;
+  awayTeam: FootballDataTeam;
+  score: { fullTime: { home: number | null; away: number | null }; halfTime: { home: number | null; away: number | null } };
+};
 type AnySportMatch = {
   match_id: string;
   date: string;
@@ -74,6 +84,97 @@ function parseScore(value?: string): [number, number] | null {
   if (!value || !/^\d+\s*-\s*\d+$/.test(value.trim())) return null;
   const [home, away] = value.split("-").map((part) => Number(part.trim()));
   return Number.isFinite(home) && Number.isFinite(away) ? [home, away] : null;
+}
+
+const footballDataCompetitions = new Set(["CL", "PL", "PD", "BL1", "SA", "FL1", "DED", "ELC", "PPL"]);
+
+async function getFootballDataMatches(competition: string, apiKey: string): Promise<FootballDataMatch[]> {
+  const url = new URL(`https://api.football-data.org/v4/competitions/${competition}/matches`);
+  url.searchParams.set("status", "FINISHED");
+  const response = await fetch(url, {
+    headers: { "X-Auth-Token": apiKey },
+    next: { revalidate: 900 },
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !Array.isArray(payload?.matches)) {
+    console.error("[GOALPRO analysis] football-data.org request failed", {
+      status: response.status,
+      error: payload?.message ?? payload?.error ?? "Unexpected response",
+      competition,
+    });
+    if (response.status === 401) throw new Error("football-data.org rejected FOOTBALL_DATA_API_KEY. Check the key in Vercel.");
+    if (response.status === 403) throw new Error("football-data.org does not allow this competition on the current API plan.");
+    if (response.status === 429) throw new Error("football-data.org request limit reached. Try again shortly.");
+    throw new Error("football-data.org could not return completed matches for this competition.");
+  }
+  return payload.matches as FootballDataMatch[];
+}
+
+function normalizeFootballDataName(value: string): string {
+  return value.normalize("NFD").replace(/\\p{Diacritic}/gu, "").toLowerCase()
+    .replace(/\\b(fc|cf|afc|sc|club|football|soccer)\\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ").trim().replace(/\\s+/g, " ");
+}
+
+function footballDataTeamNames(team: FootballDataTeam): string[] {
+  return [team.name, team.shortName ?? "", team.tla ?? ""].filter(Boolean);
+}
+
+function resolveFootballDataTeam(matches: FootballDataMatch[], requestedName: string): string | null {
+  const requested = normalizeFootballDataName(requestedName);
+  const teams = new Map<string, string[]>();
+  for (const match of matches) {
+    for (const team of [match.homeTeam, match.awayTeam]) {
+      const key = String(team.id);
+      teams.set(key, footballDataTeamNames(team));
+    }
+  }
+  const entries = [...teams.entries()].map(([id, names]) => ({ id, names, normalized: names.map(normalizeFootballDataName) }));
+  const exact = entries.filter((entry) => entry.normalized.includes(requested));
+  if (exact.length === 1) return exact[0].id;
+  const requestedTokens = new Set(requested.split(" "));
+  const partial = entries.filter((entry) => entry.normalized.some((name) => {
+    const tokens = new Set(name.split(" "));
+    return tokens.size > 0 && [...tokens].every((token) => requestedTokens.has(token));
+  }));
+  return partial.length === 1 ? partial[0].id : null;
+}
+
+function summarizeFootballData(matches: FootballDataMatch[], teamId: string): TeamSummary {
+  const recent = matches.filter((match) =>
+    String(match.homeTeam.id) === teamId || String(match.awayTeam.id) === teamId
+  ).sort((a, b) => Date.parse(b.utcDate) - Date.parse(a.utcDate)).slice(0, 10);
+  let scored = 0, conceded = 0, btts = 0, over15 = 0, over25 = 0;
+  let firstHalfOver05 = 0, secondHalfOver05 = 0, halfSamples = 0;
+  for (const match of recent) {
+    const home = String(match.homeTeam.id) === teamId;
+    const gf = home ? match.score.fullTime.home : match.score.fullTime.away;
+    const ga = home ? match.score.fullTime.away : match.score.fullTime.home;
+    if (gf === null || ga === null) continue;
+    scored += gf; conceded += ga;
+    if (gf > 0 && ga > 0) btts++;
+    if (gf + ga > 1) over15++;
+    if (gf + ga > 2) over25++;
+    const htHome = match.score.halfTime.home, htAway = match.score.halfTime.away;
+    if (htHome !== null && htAway !== null) {
+      const firstHalfGoals = htHome + htAway;
+      const secondHalfGoals = gf + ga - firstHalfGoals;
+      if (firstHalfGoals > 0) firstHalfOver05++;
+      if (secondHalfGoals > 0) secondHalfOver05++;
+      halfSamples++;
+    }
+  }
+  const n = recent.length;
+  return {
+    matches: n,
+    averageGoalsFor: n ? Number((scored / n).toFixed(2)) : 0,
+    averageGoalsAgainst: n ? Number((conceded / n).toFixed(2)) : 0,
+    bttsRate: n ? Number((btts / n).toFixed(3)) : 0,
+    over15Rate: n ? Number((over15 / n).toFixed(3)) : 0,
+    over25Rate: n ? Number((over25 / n).toFixed(3)) : 0,
+    firstHalfOver05Rate: halfSamples ? Number((firstHalfOver05 / halfSamples).toFixed(3)) : null,
+    secondHalfOver05Rate: halfSamples ? Number((secondHalfOver05 / halfSamples).toFixed(3)) : null,
+  };
 }
 
 async function getAnySportLeagueMatches(leagueId: string, apiKey: string): Promise<AnySportMatch[]> {
@@ -213,6 +314,55 @@ export async function GET(request: NextRequest) {
   const league = params.get("league")?.trim().toLowerCase() ?? "";
   if (!Number.isSafeInteger(fixtureId) || fixtureId <= 0 || !homeName || !awayName || homeName.length > 100 || awayName.length > 100) {
     return NextResponse.json({ error: "The fixture details are invalid." }, { status: 400 });
+  }
+
+  const footballDataCompetition = params.get("footballDataCompetition")?.trim().toUpperCase() ?? "";
+  if (footballDataCompetition) {
+    if (!footballDataCompetitions.has(footballDataCompetition)) {
+      return NextResponse.json({ error: "This competition is not supported by football-data.org on the configured GOALPRO provider map." }, { status: 400 });
+    }
+    const apiKey = process.env.FOOTBALL_DATA_API_KEY;
+    if (!apiKey) return NextResponse.json({ error: "football-data.org is not configured. Add FOOTBALL_DATA_API_KEY in Vercel." }, { status: 503 });
+    try {
+      const matches = await getFootballDataMatches(footballDataCompetition, apiKey);
+      const homeId = resolveFootballDataTeam(matches, homeName);
+      const awayId = resolveFootballDataTeam(matches, awayName);
+      const home = homeId ? summarizeFootballData(matches, homeId) : summarizeFootballData([], "");
+      const away = awayId ? summarizeFootballData(matches, awayId) : summarizeFootballData([], "");
+      if (!home.matches || !away.matches) {
+        const returnedTeams = [...new Map(matches.flatMap((match) => [match.homeTeam, match.awayTeam]).map((team) => [team.id, team.name])).values()].sort();
+        return NextResponse.json({
+          error: "football-data.org returned completed competition matches, but could not find recent form for both fixture teams. No statistics were generated.",
+          diagnostics: { returnedMatches: matches.length, resolvedTeams: { home: homeId, away: awayId }, matchedCounts: { home: home.matches, away: away.matches }, returnedTeams: returnedTeams.slice(0, 50) },
+        }, { status: 404 });
+      }
+      const h2h = matches.filter((match) =>
+        [String(match.homeTeam.id), String(match.awayTeam.id)].includes(homeId!) &&
+        [String(match.homeTeam.id), String(match.awayTeam.id)].includes(awayId!)
+      ).sort((a, b) => Date.parse(b.utcDate) - Date.parse(a.utcDate)).slice(0, 10).map((match) => ({
+        fixtureId: match.id,
+        date: match.utcDate,
+        home: match.homeTeam.shortName ?? match.homeTeam.name,
+        away: match.awayTeam.shortName ?? match.awayTeam.name,
+        score: [match.score.fullTime.home ?? 0, match.score.fullTime.away ?? 0] as [number, number],
+        competition: match.competition?.name ?? footballDataCompetition,
+      }));
+      return NextResponse.json({
+        fixtureId,
+        formSource: "football-data.org completed current-season competition results",
+        sampleSizes: { homeRecent: home.matches, awayRecent: away.matches, headToHead: h2h.length },
+        home, away, headToHead: h2h,
+        limitations: [
+          "Team form uses up to the latest 10 completed matches returned for the current competition season.",
+          "Half-specific rates use published half-time scores; unavailable half-time data is excluded from those rates.",
+          "Only competitions covered by football-data.org and enabled on the API plan can be analysed.",
+          "These are observed historical rates, not calibrated probabilities or guaranteed predictions.",
+        ],
+      }, { headers: { "Cache-Control": "s-maxage=900, stale-while-revalidate=300" } });
+    } catch (error) {
+      console.error("[GOALPRO analysis] football-data.org analysis failed", { message: error instanceof Error ? error.message : "Unknown error" });
+      return NextResponse.json({ error: error instanceof Error ? error.message : "football-data.org analysis is unavailable." }, { status: 502 });
+    }
   }
 
   if (anySportLeagueId) {
