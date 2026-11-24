@@ -227,11 +227,25 @@ export async function GET(request: NextRequest) {
       const resolvedAwayName = resolveAnySportTeamName(matches, awayName);
       const home = resolvedHomeName ? summarizeAnySport(matches, resolvedHomeName) : summarizeAnySport([], homeName);
       const away = resolvedAwayName ? summarizeAnySport(matches, resolvedAwayName) : summarizeAnySport([], awayName);
+      const statusCounts = matches.reduce<Record<string, number>>((counts, match) => {
+        const status = String(match.status ?? "missing");
+        counts[status] = (counts[status] ?? 0) + 1;
+        return counts;
+      }, {});
+      const teamMatchSamples = matches
+        .filter((match) => [resolvedHomeName, resolvedAwayName].filter(Boolean).some((name) =>
+          normalizeAnySportTeamName(match.home.name) === normalizeAnySportTeamName(name!) ||
+          normalizeAnySportTeamName(match.away.name) === normalizeAnySportTeamName(name!)
+        ))
+        .slice(0, 8)
+        .map((match) => ({ date: match.date, status: match.status, home: match.home.name, away: match.away.name, ftScore: match.ft_score ?? null, htScore: match.ht_score ?? null }));
       if (!home.matches || !away.matches) {
         const availableTeams = [...new Set(matches.flatMap((m) => [m.home.name, m.away.name]))].sort();
         console.warn("[GOALPRO analysis] AnySport team-name diagnostic", {
           leagueId: anySportLeagueId,
           returnedMatches: matches.length,
+          statusCounts,
+          teamMatchSamples,
           requestedTeams: [homeName, awayName],
           resolvedTeams: { home: resolvedHomeName, away: resolvedAwayName },
           matchedCounts: { home: home.matches, away: away.matches },
@@ -241,6 +255,8 @@ export async function GET(request: NextRequest) {
           error: `AnySport returned no completed Liga de Ascenso matches for one or both teams in the last 90 days. No form statistics were generated. Returned team names: ${availableTeams.slice(0, 20).join(", ") || "none"}.`,
           diagnostics: {
             returnedMatches: matches.length,
+            statusCounts,
+            teamMatchSamples,
             matchedCounts: { home: home.matches, away: away.matches },
             resolvedTeams: { home: resolvedHomeName, away: resolvedAwayName },
             returnedTeams: availableTeams.slice(0, 40),
