@@ -139,34 +139,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    let dataSeason = season;
-    let usedHistoricalFallback = false;
-    const [recent, headToHead] = await Promise.all([
-      (async () => {
-        try {
-          return await Promise.all([
-            providerGet(`/fixtures?team=${homeId}&season=${season}`, apiKey),
-            providerGet(`/fixtures?team=${awayId}&season=${season}`, apiKey),
-          ]);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "";
-          const seasonRestricted = message.includes("Free plans do not have access to this season");
-          if (!seasonRestricted || season <= 2024) throw error;
+    // Pull a rolling recent window without the season or "last" parameters,
+    // both of which are restricted on the user's current API plan.
+    const to = new Date();
+    const from = new Date(to);
+    from.setDate(from.getDate() - 180);
+    const dateOnly = (date: Date) => date.toISOString().slice(0, 10);
+    const recentWindow = `from=${dateOnly(from)}&to=${dateOnly(to)}`;
 
-          // The current fixture season is outside the user's API plan.
-          // Retry against the newest season explicitly allowed by the provider.
-          dataSeason = 2024;
-          usedHistoricalFallback = true;
-          console.warn("[GOALPRO analysis] Using historical season fallback", {
-            requestedSeason: season,
-            dataSeason,
-          });
-          return await Promise.all([
-            providerGet(`/fixtures?team=${homeId}&season=${dataSeason}`, apiKey),
-            providerGet(`/fixtures?team=${awayId}&season=${dataSeason}`, apiKey),
-          ]);
-        }
-      })(),
+    const [recent, headToHead] = await Promise.all([
+      Promise.all([
+        providerGet(`/fixtures?team=${homeId}&${recentWindow}`, apiKey),
+        providerGet(`/fixtures?team=${awayId}&${recentWindow}`, apiKey),
+      ]),
       providerGet(`/fixtures/headtohead?h2h=${homeId}-${awayId}`, apiKey)
         .catch((error) => {
           console.warn("[GOALPRO analysis] Head-to-head data unavailable on this API plan", {
