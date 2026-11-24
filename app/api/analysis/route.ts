@@ -111,9 +111,9 @@ async function getFootballDataMatches(competition: string, apiKey: string): Prom
 }
 
 function normalizeFootballDataName(value: string): string {
-  return value.normalize("NFD").replace(/\\p{Diacritic}/gu, "").toLowerCase()
-    .replace(/\\b(fc|cf|afc|sc|club|football|soccer)\\b/g, " ")
-    .replace(/[^a-z0-9]+/g, " ").trim().replace(/\\s+/g, " ");
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase()
+    .replace(/\b(fc|cf|afc|sc|club|football|soccer)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 }
 
 function footballDataTeamNames(team: FootballDataTeam): string[] {
