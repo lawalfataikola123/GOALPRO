@@ -99,7 +99,8 @@ export default function Home() {
     setAnalysisLoading(true);
     try {
       const ninjasLeague = apiNinjasLeague(match.league.name);
-      const isCostaRicaAscenso = match.league.country.trim().toLowerCase() === "costa rica"
+      const normalizedCountry = match.league.country.trim().toLowerCase().replace(/[^a-z]+/g, " ").trim();
+      const isCostaRicaAscenso = normalizedCountry === "costa rica"
         && /first league|liga de ascenso/i.test(match.league.name);
       const query = new URLSearchParams({
         fixture: String(match.fixture.id),
@@ -167,7 +168,7 @@ export default function Home() {
               {analysisError && <p className="input-note">{analysisError}</p>}
               {analysis && <>
                 <p className="input-note">Source: {analysis.formSource}. This is current-season form, not a historical-season substitute.</p>
-                <div className="analysis-columns">{[{ name: match.teams.home.name, stats: analysis.home, count: analysis.sampleSizes.homeRecent }, { name: match.teams.away.name, stats: analysis.away, count: analysis.sampleSizes.awayRecent }].map(team => <div className="analysis-team" key={team.name}><h4>{team.name}</h4><small>{team.count} completed current-season matches</small><p>Goals for <b>{team.stats.averageGoalsFor.toFixed(2)}</b> · Against <b>{team.stats.averageGoalsAgainst.toFixed(2)}</b></p><p>BTTS <b>{Math.round(team.stats.bttsRate * 100)}%</b> · O1.5 <b>{Math.round(team.stats.over15Rate * 100)}%</b> · O2.5 <b>{Math.round(team.stats.over25Rate * 100)}%</b></p><p>1H O0.5 <b>N/A</b> · 2H O0.5 <b>N/A</b></p></div>)}</div>
+                <div className="analysis-columns">{[{ name: match.teams.home.name, stats: analysis.home, count: analysis.sampleSizes.homeRecent }, { name: match.teams.away.name, stats: analysis.away, count: analysis.sampleSizes.awayRecent }].map(team => <div className="analysis-team" key={team.name}><h4>{team.name}</h4><small>{team.count} completed current-season matches</small><p>Goals for <b>{team.stats.averageGoalsFor.toFixed(2)}</b> · Against <b>{team.stats.averageGoalsAgainst.toFixed(2)}</b></p><p>BTTS <b>{Math.round(team.stats.bttsRate * 100)}%</b> · O1.5 <b>{Math.round(team.stats.over15Rate * 100)}%</b> · O2.5 <b>{Math.round(team.stats.over25Rate * 100)}%</b></p><p>1H O0.5 <b>{team.stats.firstHalfOver05Rate === null ? 'N/A' : Math.round(team.stats.firstHalfOver05Rate * 100) + '%'}</b> · 2H O0.5 <b>{team.stats.secondHalfOver05Rate === null ? 'N/A' : Math.round(team.stats.secondHalfOver05Rate * 100) + '%'}</b></p></div>)}</div>
                 <h4>Head-to-head <small>({analysis.sampleSizes.headToHead} completed matches)</small></h4>
                 {analysis.headToHead.length ? <div className="h2h-list">{analysis.headToHead.map(game => <p key={game.fixtureId}>{new Date(game.date).toLocaleDateString('en-GB')} · {game.home} <b>{game.score[0]}–{game.score[1]}</b> {game.away}</p>)}</div> : <p className="input-note">No completed head-to-head records were returned.</p>}
                 <p className="input-note">Observed goal rates only. These are not calibrated match probabilities. {analysis.limitations.join(' ')}</p>
