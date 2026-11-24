@@ -38,6 +38,29 @@ type MatchAnalysis = {
   limitations: string[];
 };
 
+const API_NINJAS_LEAGUES: Record<string, string> = {
+  "premier league": "epl", "english premier league": "epl",
+  "uefa champions league": "ucl", "champions league": "ucl",
+  "uefa europa league": "uel", "europa league": "uel",
+  "uefa europa conference league": "uecl", "conference league": "uecl",
+  "la liga": "laliga", "laliga": "laliga", "spanish la liga": "laliga",
+  "bundesliga": "bundesliga", "german bundesliga": "bundesliga",
+  "serie a": "seriea", "italian serie a": "seriea",
+  "ligue 1": "ligue1", "french ligue 1": "ligue1",
+  "eredivisie": "eredivisie", "dutch eredivisie": "eredivisie",
+  "championship": "championship", "efl championship": "championship",
+  "fa cup": "facup", "english fa cup": "facup",
+  "efl cup": "eflcup", "carabao cup": "eflcup",
+  "scottish premiership": "scottishpremiership",
+  "mls": "mls", "major league soccer": "mls",
+  "primeira liga": "primeiraliga", "portuguese primeira liga": "primeiraliga",
+  "saudi pro league": "saudiproleague",
+  "ligue 2": "ligue2", "serie b": "serieb", "bundesliga 2": "bundesliga2",
+};
+function apiNinjasLeague(name: string): string | null {
+  return API_NINJAS_LEAGUES[name.trim().toLowerCase()] ?? null;
+}
+
 export default function Home() {
   const [inputs, setInputs] = useState(initial);
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
@@ -79,7 +102,9 @@ export default function Home() {
         fixture: String(match.fixture.id),
         homeName: match.teams.home.name,
         awayName: match.teams.away.name,
+        league: apiNinjasLeague(match.league.name) ?? "",
       });
+      if (!query.get("league")) throw new Error(`GOALPRO cannot retrieve recent form for ${match.league.name}: this competition is not mapped to an API Ninjas league yet.`);
       const response = await fetch(`/api/analysis?${query.toString()}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? 'Analysis could not be loaded.');
