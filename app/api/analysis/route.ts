@@ -147,6 +147,24 @@ function normalizeAnySportTeamName(value: string): string {
     .replace(/\s+/g, " ");
 }
 
+function resolveAnySportTeamName(matches: AnySportMatch[], requestedName: string): string | null {
+  const requested = normalizeAnySportTeamName(requestedName);
+  if (!requested) return null;
+  const names = [...new Set(matches.flatMap((match) => [match.home.name, match.away.name]))];
+  const normalizedNames = names.map((name) => ({ name, normalized: normalizeAnySportTeamName(name) }));
+  const exact = normalizedNames.filter((entry) => entry.normalized === requested);
+  if (exact.length === 1) return exact[0].name;
+
+  // Accept a shorter provider name only when its tokens identify one unique team.
+  const requestedTokens = new Set(requested.split(" "));
+  const candidates = normalizedNames.filter((entry) => {
+    const tokens = new Set(entry.normalized.split(" "));
+    return tokens.size > 0 && tokens.size < requestedTokens.size &&
+      [...tokens].every((token) => requestedTokens.has(token));
+  });
+  return candidates.length === 1 ? candidates[0].name : null;
+}
+
 function summarizeAnySport(matches: AnySportMatch[], teamName: string): TeamSummary {
   const normalized = normalizeAnySportTeamName(teamName);
   const recent = matches
@@ -205,14 +223,17 @@ export async function GET(request: NextRequest) {
     if (!apiKey) return NextResponse.json({ error: "AnySport is not configured on the server. Add ANYSPORT_API_KEY in Vercel." }, { status: 503 });
     try {
       const matches = await getAnySportLeagueMatches(anySportLeagueId, apiKey);
-      const home = summarizeAnySport(matches, homeName);
-      const away = summarizeAnySport(matches, awayName);
+      const resolvedHomeName = resolveAnySportTeamName(matches, homeName);
+      const resolvedAwayName = resolveAnySportTeamName(matches, awayName);
+      const home = resolvedHomeName ? summarizeAnySport(matches, resolvedHomeName) : summarizeAnySport([], homeName);
+      const away = resolvedAwayName ? summarizeAnySport(matches, resolvedAwayName) : summarizeAnySport([], awayName);
       if (!home.matches || !away.matches) {
         const availableTeams = [...new Set(matches.flatMap((m) => [m.home.name, m.away.name]))].sort();
         console.warn("[GOALPRO analysis] AnySport team-name diagnostic", {
           leagueId: anySportLeagueId,
           returnedMatches: matches.length,
           requestedTeams: [homeName, awayName],
+          resolvedTeams: { home: resolvedHomeName, away: resolvedAwayName },
           matchedCounts: { home: home.matches, away: away.matches },
           returnedTeams: availableTeams.slice(0, 40),
         });
@@ -221,6 +242,7 @@ export async function GET(request: NextRequest) {
           diagnostics: {
             returnedMatches: matches.length,
             matchedCounts: { home: home.matches, away: away.matches },
+            resolvedTeams: { home: resolvedHomeName, away: resolvedAwayName },
             returnedTeams: availableTeams.slice(0, 40),
           },
         }, { status: 404 });
