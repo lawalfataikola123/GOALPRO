@@ -40,7 +40,9 @@ type MatchAnalysis = {
 
 const FOOTBALL_DATA_COMPETITIONS: Record<string, string> = {
   "europe|uefa champions league": "CL",
+  "world|uefa champions league": "CL",
   "europe|champions league": "CL",
+  "world|champions league": "CL",
   "england|premier league": "PL",
   "england|english premier league": "PL",
   "spain|la liga": "PD",
