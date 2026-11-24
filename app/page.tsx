@@ -38,27 +38,22 @@ type MatchAnalysis = {
   limitations: string[];
 };
 
-const API_NINJAS_LEAGUES: Record<string, string> = {
-  "premier league": "epl", "english premier league": "epl",
-  "uefa champions league": "ucl", "champions league": "ucl",
-  "uefa europa league": "uel", "europa league": "uel",
-  "uefa europa conference league": "uecl", "conference league": "uecl",
-  "la liga": "laliga", "laliga": "laliga", "spanish la liga": "laliga",
-  "bundesliga": "bundesliga", "german bundesliga": "bundesliga",
-  "serie a": "seriea", "italian serie a": "seriea",
-  "ligue 1": "ligue1", "french ligue 1": "ligue1",
-  "eredivisie": "eredivisie", "dutch eredivisie": "eredivisie",
-  "championship": "championship", "efl championship": "championship",
-  "fa cup": "facup", "english fa cup": "facup",
-  "efl cup": "eflcup", "carabao cup": "eflcup",
-  "scottish premiership": "scottishpremiership",
-  "mls": "mls", "major league soccer": "mls",
-  "primeira liga": "primeiraliga", "portuguese primeira liga": "primeiraliga",
-  "saudi pro league": "saudiproleague",
-  "ligue 2": "ligue2", "serie b": "serieb", "bundesliga 2": "bundesliga2",
+const FOOTBALL_DATA_COMPETITIONS: Record<string, string> = {
+  "europe|uefa champions league": "CL",
+  "europe|champions league": "CL",
+  "england|premier league": "PL",
+  "england|english premier league": "PL",
+  "spain|la liga": "PD",
+  "spain|laliga": "PD",
+  "germany|bundesliga": "BL1",
+  "italy|serie a": "SA",
+  "france|ligue 1": "FL1",
+  "netherlands|eredivisie": "DED",
+  "england|championship": "ELC",
+  "portugal|primeira liga": "PPL",
 };
-function apiNinjasLeague(name: string): string | null {
-  return API_NINJAS_LEAGUES[name.trim().toLowerCase()] ?? null;
+function footballDataCompetition(country: string, name: string): string | null {
+  return FOOTBALL_DATA_COMPETITIONS[`${country.trim().toLowerCase()}|${name.trim().toLowerCase()}`] ?? null;
 }
 
 export default function Home() {
@@ -98,7 +93,7 @@ export default function Home() {
     setAnalysisError('');
     setAnalysisLoading(true);
     try {
-      const ninjasLeague = apiNinjasLeague(match.league.name);
+      const fdCompetition = footballDataCompetition(match.league.country, match.league.name);
       const normalizedCountry = match.league.country.trim().toLowerCase().replace(/[^a-z]+/g, " ").trim();
       const isCostaRicaAscenso = normalizedCountry === "costa rica"
         && /first league|liga de ascenso/i.test(match.league.name);
@@ -106,11 +101,11 @@ export default function Home() {
         fixture: String(match.fixture.id),
         homeName: match.teams.home.name,
         awayName: match.teams.away.name,
-        league: ninjasLeague ?? "",
+        footballDataCompetition: fdCompetition ?? "",
         anysportLeagueId: isCostaRicaAscenso ? "asl_a401c703b7db444fa8ef215f190c30d3" : "",
       });
-      if (!query.get("league") && !query.get("anysportLeagueId")) {
-        throw new Error(`GOALPRO cannot retrieve recent form for ${match.league.country} · ${match.league.name}: no configured provider covers this competition yet.`);
+      if (!query.get("footballDataCompetition") && !query.get("anysportLeagueId")) {
+        throw new Error(`GOALPRO cannot retrieve recent form for ${match.league.country} · ${match.league.name}: football-data.org does not currently cover this competition in GOALPRO.`);
       }
       const response = await fetch(`/api/analysis?${query.toString()}`);
       const payload = await response.json();
