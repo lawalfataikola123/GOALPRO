@@ -34,10 +34,16 @@ async function providerGet(path: string, apiKey: string) {
     next: { revalidate: 900 },
   });
 
-  if (!response.ok) throw new Error("provider");
-  const payload = await response.json();
-  if (payload.errors && Object.keys(payload.errors).length > 0) {
-    throw new Error("provider");
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || (payload.errors && Object.keys(payload.errors).length > 0)) {
+    // Keep provider diagnostics server-side; never log or return the API key.
+    console.error("[GOALPRO analysis] Football provider request failed", {
+      path,
+      status: response.status,
+      errors: payload.errors ?? null,
+      message: payload.message ?? null,
+    });
+    throw new Error(`Football provider request failed (HTTP ${response.status})`);
   }
   return (payload.response ?? []) as ApiFixture[];
 }
@@ -171,7 +177,10 @@ export async function GET(request: NextRequest) {
         "A small sample or missing provider data can reduce reliability.",
       ],
     });
-  } catch {
+  } catch (error) {
+    console.error("[GOALPRO analysis] Analysis request failed", {
+      message: error instanceof Error ? error.message : "Unknown analysis error",
+    });
     return NextResponse.json(
       { error: "Match analysis could not be retrieved. Check provider access and try again later." },
       { status: 502 },
