@@ -49,11 +49,14 @@ async function providerGet(path: string, apiKey: string) {
 }
 
 function summarizeTeam(fixtures: ApiFixture[], teamId: number): TeamSummary {
-  const matches = fixtures.filter((match) =>
-    completedStatuses.has(match.fixture.status.short) &&
-    match.goals.home !== null &&
-    match.goals.away !== null
-  );
+  const matches = fixtures
+    .filter((match) =>
+      completedStatuses.has(match.fixture.status.short) &&
+      match.goals.home !== null &&
+      match.goals.away !== null
+    )
+    .sort((a, b) => Date.parse(b.fixture.date) - Date.parse(a.fixture.date))
+    .slice(0, 10);
 
   let scored = 0;
   let conceded = 0;
@@ -142,8 +145,8 @@ export async function GET(request: NextRequest) {
       (async () => {
         try {
           return await Promise.all([
-            providerGet(`/fixtures?team=${homeId}&last=10&season=${season}`, apiKey),
-            providerGet(`/fixtures?team=${awayId}&last=10&season=${season}`, apiKey),
+            providerGet(`/fixtures?team=${homeId}&season=${season}`, apiKey),
+            providerGet(`/fixtures?team=${awayId}&season=${season}`, apiKey),
           ]);
         } catch (error) {
           const message = error instanceof Error ? error.message : "";
@@ -159,12 +162,18 @@ export async function GET(request: NextRequest) {
             dataSeason,
           });
           return await Promise.all([
-            providerGet(`/fixtures?team=${homeId}&last=10&season=${dataSeason}`, apiKey),
-            providerGet(`/fixtures?team=${awayId}&last=10&season=${dataSeason}`, apiKey),
+            providerGet(`/fixtures?team=${homeId}&season=${dataSeason}`, apiKey),
+            providerGet(`/fixtures?team=${awayId}&season=${dataSeason}`, apiKey),
           ]);
         }
       })(),
-      providerGet(`/fixtures/headtohead?h2h=${homeId}-${awayId}&last=10`, apiKey),
+      providerGet(`/fixtures/headtohead?h2h=${homeId}-${awayId}`, apiKey)
+        .catch((error) => {
+          console.warn("[GOALPRO analysis] Head-to-head data unavailable on this API plan", {
+            message: error instanceof Error ? error.message : "Unknown provider error",
+          });
+          return [] as ApiFixture[];
+        }),
     ]);
     const [homeRecent, awayRecent] = recent;
 
@@ -176,6 +185,8 @@ export async function GET(request: NextRequest) {
         match.goals.home !== null &&
         match.goals.away !== null
       )
+      .sort((a, b) => Date.parse(b.fixture.date) - Date.parse(a.fixture.date))
+      .slice(0, 10)
       .map((match) => ({
         fixtureId: match.fixture.id,
         date: match.fixture.date,
