@@ -20,9 +20,21 @@ const marketGroups = [
 
 type Fixture = {
   fixture: { id: number; date: string; status: { long: string } };
-  teams: { home: { name: string }; away: { name: string } };
-  league: { name: string; country: string };
+  teams: { home: { id: number; name: string }; away: { id: number; name: string } };
+  league: { name: string; country: string; season: number };
   goals: { home: number | null; away: number | null };
+};
+
+type TeamAnalysis = {
+  matches: number; averageGoalsFor: number; averageGoalsAgainst: number;
+  bttsRate: number; over15Rate: number; over25Rate: number;
+  firstHalfOver05Rate: number | null; secondHalfOver05Rate: number | null;
+};
+type MatchAnalysis = {
+  sampleSizes: { homeRecent: number; awayRecent: number; headToHead: number };
+  home: TeamAnalysis; away: TeamAnalysis;
+  headToHead: Array<{ fixtureId: number; date: string; home: string; away: string; score: [number, number]; competition: string }>;
+  limitations: string[];
 };
 
 export default function Home() {
@@ -30,6 +42,10 @@ export default function Home() {
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [fixtureState, setFixtureState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [fixtureError, setFixtureError] = useState('');
+  const [analysisFor, setAnalysisFor] = useState<number | null>(null);
+  const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -52,6 +68,26 @@ export default function Home() {
     return () => { active = false; };
   }, []);
   const markets = useMemo(() => calculateMarkets(inputs), [inputs]);
+  const analyseFixture = async (match: Fixture) => {
+    setAnalysisFor(match.fixture.id);
+    setAnalysis(null);
+    setAnalysisError('');
+    setAnalysisLoading(true);
+    try {
+      const query = new URLSearchParams({
+        fixture: String(match.fixture.id), home: String(match.teams.home.id),
+        away: String(match.teams.away.id), season: String(match.league.season),
+      });
+      const response = await fetch(`/api/analysis?${query.toString()}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? 'Analysis could not be loaded.');
+      setAnalysis(payload);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : 'Analysis could not be loaded.');
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
   const update = (key: keyof GoalInputs, value: string) => {
     const parsed = Number(value);
     setInputs(current => ({ ...current, [key]: Number.isFinite(parsed) ? Math.max(0, Math.min(5, parsed)) : 0 }));
@@ -92,6 +128,17 @@ export default function Home() {
             <div className="fixture-league">{match.league.country} · {match.league.name}</div>
             <div className="fixture-teams"><span>{match.teams.home.name}</span><strong>{match.goals.home ?? '—'} : {match.goals.away ?? '—'}</strong><span>{match.teams.away.name}</span></div>
             <div className="fixture-meta">{new Date(match.fixture.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' })} WAT · {match.fixture.status.long}</div>
+            <button className="reset" onClick={() => analysisFor === match.fixture.id ? (setAnalysisFor(null), setAnalysis(null), setAnalysisError('')) : analyseFixture(match)}>{analysisFor === match.fixture.id ? 'Close analysis' : 'Analyse match ↗'}</button>
+            {analysisFor === match.fixture.id && <div className="match-analysis">
+              {analysisLoading && <p className="input-note">Retrieving recent form and head-to-head data…</p>}
+              {analysisError && <p className="input-note">{analysisError}</p>}
+              {analysis && <>
+                <div className="analysis-columns">{[{ name: match.teams.home.name, stats: analysis.home, count: analysis.sampleSizes.homeRecent }, { name: match.teams.away.name, stats: analysis.away, count: analysis.sampleSizes.awayRecent }].map(team => <div className="analysis-team" key={team.name}><h4>{team.name}</h4><small>{team.count} completed matches</small><p>Goals for <b>{team.stats.averageGoalsFor.toFixed(2)}</b> · Against <b>{team.stats.averageGoalsAgainst.toFixed(2)}</b></p><p>BTTS <b>{Math.round(team.stats.bttsRate * 100)}%</b> · O1.5 <b>{Math.round(team.stats.over15Rate * 100)}%</b> · O2.5 <b>{Math.round(team.stats.over25Rate * 100)}%</b></p><p>1H O0.5 <b>{team.stats.firstHalfOver05Rate === null ? 'N/A' : `${Math.round(team.stats.firstHalfOver05Rate * 100)}%`}</b> · 2H O0.5 <b>{team.stats.secondHalfOver05Rate === null ? 'N/A' : `${Math.round(team.stats.secondHalfOver05Rate * 100)}%`}</b></p></div>)}</div>
+                <h4>Head-to-head <small>({analysis.sampleSizes.headToHead} completed matches)</small></h4>
+                {analysis.headToHead.length ? <div className="h2h-list">{analysis.headToHead.map(game => <p key={game.fixtureId}>{new Date(game.date).toLocaleDateString('en-GB')} · {game.home} <b>{game.score[0]}–{game.score[1]}</b> {game.away}</p>)}</div> : <p className="input-note">No completed head-to-head records were returned.</p>}
+                <p className="input-note">Historical rates only. These are not calibrated match probabilities. {analysis.limitations.join(' ')}</p>
+              </>}
+            </div>}
           </article>
         ))}
       </section>
